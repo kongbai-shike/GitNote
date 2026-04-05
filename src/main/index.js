@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { StoreManager } from './store-manager.js';
 import { startGithubOAuth } from './oauth.js';
 import { GitHandler } from './git-handler.js';
+import { RepoManager } from './repo-manager.js';
 import { IPC_CHANNELS, DOMAIN_LOCAL, DOMAIN_REMOTE } from '../shared/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,13 +28,14 @@ const gitHandler = new GitHandler({
     });
   }
 });
+const repoManager = new RepoManager({ storeManager, gitHandler });
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1100,
-    minHeight: 720,
+    minWidth: 860,
+    minHeight: 640,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.resolve(__dirname, '../preload/preload.cjs'),
@@ -51,6 +53,10 @@ function createWindow() {
 
 function currentRoot() {
   return storeManager.getModeRoot();
+}
+
+function currentRepo() {
+  return storeManager.getCurrentRepo();
 }
 
 function listTree(rootDir, current = '') {
@@ -86,13 +92,14 @@ function ensureAssetsDir(forFile) {
 
 function scheduleSync() {
   clearInterval(syncTimer);
-  if (storeManager.getSettings().mode !== DOMAIN_REMOTE) {
+  const repo = currentRepo();
+  if (storeManager.getSettings().mode !== DOMAIN_REMOTE || !repo?.autoSync) {
     return;
   }
-  const intervalMs = storeManager.getSettings().syncIntervalMinutes * 60 * 1000;
+  const intervalMs = (repo.syncIntervalMinutes || storeManager.getGlobalSettings().defaultSyncInterval) * 60 * 1000;
   syncTimer = setInterval(async () => {
     try {
-      await gitHandler.commitAndPush();
+      await gitHandler.commitAndPush(repo.localPath);
       mainWindow?.webContents.send('sync:status', { ok: true, at: Date.now() });
     } catch (error) {
       mainWindow?.webContents.send('sync:status', { ok: false, error: error.message });
@@ -102,15 +109,22 @@ function scheduleSync() {
 
 async function bootstrapState() {
   const settings = storeManager.getSettings();
+  const globalSettings = storeManager.getGlobalSettings();
   const auth = storeManager.getAuth();
   const root = currentRoot();
-  fs.mkdirSync(root, { recursive: true });
+  if (root) {
+    fs.mkdirSync(root, { recursive: true });
+  }
   scheduleSync();
   return {
     settings,
+    globalSettings,
     auth,
-    tree: listTree(root),
-    root
+    repos: storeManager.getRepos(),
+    currentRepoId: storeManager.getCurrentRepoId(),
+    currentRepo: currentRepo(),
+    tree: root ? listTree(root) : [],
+    root: root || ''
   };
 }
 
@@ -118,27 +132,81 @@ ipcMain.handle(IPC_CHANNELS.BOOTSTRAP, async () => bootstrapState());
 ipcMain.handle(IPC_CHANNELS.GET_SETTINGS, async () => storeManager.getSettings());
 
 ipcMain.handle(IPC_CHANNELS.SAVE_SETTINGS, async (_event, payload) => {
-  const settings = storeManager.saveSettings(payload);
+  const { globalSettings, ...settingsPayload } = payload || {};
+  const settings = storeManager.saveSettings(settingsPayload);
+  if (globalSettings) {
+    storeManager.saveGlobalSettings(globalSettings);
+  }
   storeManager.ensureBaseLayout();
   scheduleSync();
-  return settings;
+  return {
+    settings,
+    globalSettings: storeManager.getGlobalSettings(),
+    currentRepo: currentRepo()
+  };
 });
 
 ipcMain.handle(IPC_CHANNELS.START_OAUTH, async () => {
   const token = await startGithubOAuth();
-  const repoName = storeManager.getSettings().repoName;
-  const ensured = await gitHandler.ensureRepo({ token, repoName });
+  const octokitUser = await gitHandler.createOctokit(token).users.getAuthenticated();
+  const user = {
+    login: octokitUser.data.login,
+    avatarUrl: octokitUser.data.avatar_url,
+    id: octokitUser.data.id
+  };
 
   storeManager.saveAuth({
     isLoggedIn: true,
     token,
-    user: {
-      login: ensured.user.login,
-      avatarUrl: ensured.user.avatar_url,
-      id: ensured.user.id
-    }
+    user
   });
-  storeManager.saveSettings({ mode: DOMAIN_REMOTE, firstRunCompleted: true, repoName });
+  storeManager.saveSettings({ mode: DOMAIN_REMOTE, firstRunCompleted: true });
+
+  // Unified repo: auto-create gitnote-notes-${user.login} if not exists
+  const unifiedRepoName = `gitnote-notes-${user.login}`;
+  await repoManager.addRepo({
+    token,
+    repoName: unifiedRepoName,
+    localDirName: unifiedRepoName,
+    autoSync: true
+  });
+
+  scheduleSync();
+  return bootstrapState();
+});
+
+ipcMain.handle(IPC_CHANNELS.LIST_REPOS, async () => ({
+  repos: storeManager.getRepos(),
+  currentRepoId: storeManager.getCurrentRepoId()
+}));
+
+ipcMain.handle(IPC_CHANNELS.ADD_REPO, async (_event, payload) => {
+  const auth = storeManager.getAuth();
+  if (!auth.isLoggedIn) {
+    throw new Error('Please log in before connecting the synced GitNote repository.');
+  }
+  await repoManager.addRepo({
+    token: auth.token,
+    ...payload
+  });
+  scheduleSync();
+  return bootstrapState();
+});
+
+ipcMain.handle(IPC_CHANNELS.UPDATE_REPO, async (_event, { repoId, updates }) => {
+  const repo = repoManager.updateRepo(repoId, updates);
+  scheduleSync();
+  return { repo, repos: storeManager.getRepos(), currentRepoId: storeManager.getCurrentRepoId() };
+});
+
+ipcMain.handle(IPC_CHANNELS.REMOVE_REPO, async (_event, { repoId }) => {
+  const repos = repoManager.removeRepo(repoId);
+  scheduleSync();
+  return { repos, currentRepoId: storeManager.getCurrentRepoId() };
+});
+
+ipcMain.handle(IPC_CHANNELS.SWITCH_REPO, async (_event, { repoId }) => {
+  repoManager.switchRepo(repoId);
   scheduleSync();
   return bootstrapState();
 });
@@ -150,9 +218,12 @@ ipcMain.handle(IPC_CHANNELS.EXPORT_LOCAL_TO_GITHUB, async () => {
   }
 
   const localRoot = storeManager.getRootForMode(DOMAIN_LOCAL);
-  const remoteRoot = storeManager.getRootForMode(DOMAIN_REMOTE);
+  const remoteRoot = currentRepo()?.localPath;
+  if (!remoteRoot) {
+    throw new Error('Please log in first so GitNote can prepare your private sync repository.');
+  }
   fs.cpSync(localRoot, remoteRoot, { recursive: true, force: true });
-  await gitHandler.commitAndPush('Export local notes to GitHub');
+  await gitHandler.commitAndPush(remoteRoot, 'Export local notes to GitHub');
   storeManager.saveSettings({ mode: DOMAIN_REMOTE });
   scheduleSync();
   return bootstrapState();
@@ -208,33 +279,45 @@ ipcMain.handle(IPC_CHANNELS.PASTE_IMAGE, async (_event, { filePath, fileName, bu
   return { markdown: `![](assets/${targetName})` };
 });
 
-ipcMain.handle(IPC_CHANNELS.SYNC_NOW, async () => gitHandler.commitAndPush('Manual sync from GitNote'));
+ipcMain.handle(IPC_CHANNELS.SYNC_NOW, async () => {
+  const repo = currentRepo();
+  if (!repo) {
+    throw new Error('No repository selected.');
+  }
+  return gitHandler.commitAndPush(repo.localPath, 'Manual sync from GitNote');
+});
 
 ipcMain.handle(IPC_CHANNELS.GET_HISTORY, async (_event, { filePath }) => {
   const auth = storeManager.getAuth();
-  const repoName = storeManager.getSettings().repoName;
+  const repo = currentRepo();
+  if (!repo) {
+    return [];
+  }
   return gitHandler.getFileHistory({
     token: auth.token,
-    owner: auth.user.login,
-    repo: repoName,
+    owner: repo.owner,
+    repo: repo.name,
     filePath
   });
 });
 
 ipcMain.handle(IPC_CHANNELS.GET_HISTORY_CONTENT, async (_event, payload) => {
   const auth = storeManager.getAuth();
-  const repoName = storeManager.getSettings().repoName;
+  const repo = currentRepo();
+  if (!repo) {
+    throw new Error('No repository selected.');
+  }
   return gitHandler.getFileContentAtCommit({
     token: auth.token,
-    owner: auth.user.login,
-    repo: repoName,
+    owner: repo.owner,
+    repo: repo.name,
     ...payload
   });
 });
 
 ipcMain.handle(IPC_CHANNELS.RESTORE_HISTORY, async (_event, { filePath, content }) => {
   fs.writeFileSync(path.join(currentRoot(), filePath), content, 'utf8');
-  await gitHandler.commitAndPush(`Restore ${filePath} from history`);
+  await gitHandler.commitAndPush(currentRepo().localPath, `Restore ${filePath} from history`);
   return { ok: true };
 });
 
@@ -256,9 +339,9 @@ ipcMain.handle(IPC_CHANNELS.CHOOSE_DIRECTORY, async () => {
 
 app.whenReady().then(async () => {
   createWindow();
-  if (storeManager.getSettings().mode === DOMAIN_REMOTE && storeManager.getAuth().isLoggedIn) {
+  if (storeManager.getSettings().mode === DOMAIN_REMOTE && storeManager.getAuth().isLoggedIn && currentRepo()?.localPath) {
     try {
-      await gitHandler.pullLatest();
+      await gitHandler.pullLatest(currentRepo().localPath);
     } catch {
       // Keep app usable even if startup sync fails.
     }

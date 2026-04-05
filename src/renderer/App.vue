@@ -2,13 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRepoStore } from './stores/repo';
 import { useAuthStore } from './stores/auth';
+import { createTranslator } from './i18n';
 import LoginPanel from './components/LoginPanel.vue';
+import RepoManager from './components/RepoManager.vue';
 import FileTree from './components/FileTree.vue';
 import MarkdownEditor from './components/MarkdownEditor.vue';
 import Settings from './components/Settings.vue';
 import ConflictResolver from './components/ConflictResolver.vue';
 import HistoryDialog from './components/HistoryDialog.vue';
-import { createTranslator } from './i18n';
 
 const repo = useRepoStore();
 const auth = useAuthStore();
@@ -16,88 +17,90 @@ const auth = useAuthStore();
 const loading = ref(true);
 const bootError = ref('');
 const settingsOpen = ref(false);
+const repoManagerOpen = ref(false);
 const conflictOpen = ref(false);
 const conflictPayload = ref(null);
 const historyOpen = ref(false);
 const historyEntries = ref([]);
 const historyPreview = ref('');
 const historyFilePath = ref('');
+
+const t = computed(() => createTranslator(repo.settings.language || 'zh-CN'));
+const firstRun = computed(() => !repo.settings.firstRunCompleted && !auth.isLoggedIn && repo.mode === 'local');
+
 const templateCards = computed(() => [
   {
     key: 'tplProduct',
     file: 'product-brief.md',
-    content: `# 产品需求
+    content: `# Product Brief
 
-## 背景
+## Background
 - 
 
-## 目标
+## Goals
 - 
 
-## 核心功能
-- 功能 1
-- 功能 2
+## Core Features
+- Feature 1
+- Feature 2
 
-## 风险
+## Risks
 - 
 `
   },
   {
     key: 'tplMeeting',
     file: 'meeting-notes.md',
-    content: `# 会议纪要
+    content: `# Meeting Notes
 
-## 会议主题
+## Topic
 - 
 
-## 参会人员
+## Participants
 - 
 
-## 关键结论
+## Key Decisions
 - 
 
-## 待办事项
+## Action Items
 - [ ] 
 `
   },
   {
     key: 'tplRelease',
     file: 'release-checklist.md',
-    content: `# 发布清单
+    content: `# Release Checklist
 
-## 发布信息
-- 版本号：
-- 发布时间：
+## Release Info
+- Version:
+- Time:
 
-## 检查项
-- [ ] 功能验证
-- [ ] 回归测试
-- [ ] 回滚方案
+## Checks
+- [ ] Functional verification
+- [ ] Regression test
+- [ ] Rollback plan
 `
   },
   {
     key: 'tplVendor',
     file: 'vendor-adaptation.md',
-    content: `# 厂商适配记录
+    content: `# Vendor Adaptation
 
-## 厂商信息
-- 厂商：
-- 设备/系统：
+## Vendor Info
+- Vendor:
+- Device/System:
 
-## 兼容性表现
+## Compatibility Notes
 - 
 
-## 差异说明
+## Differences
 - 
 
-## 后续行动
+## Next Actions
 - [ ] 
 `
   }
 ]);
-
-const firstRun = computed(() => !repo.settings.firstRunCompleted && !auth.isLoggedIn && repo.mode === 'local');
-const t = computed(() => createTranslator(repo.settings.language || 'zh-CN'));
 
 watch(
   () => repo.settings.backgroundTheme,
@@ -112,13 +115,15 @@ onMounted(async () => {
     if (!window.gitNoteApi) {
       throw new Error(t.value('startupPreload'));
     }
+
     const state = await repo.bootstrap();
     auth.setAuth(state.auth);
-    document.documentElement.dataset.theme = state.settings.backgroundTheme || 'paper-dawn';
+
     window.gitNoteApi.onConflictOpen((payload) => {
       conflictPayload.value = payload;
       conflictOpen.value = true;
     });
+
     window.gitNoteApi.onSyncStatus((payload) => {
       repo.syncStatus = payload.ok
         ? `${t.value('lastSync')} ${new Date(payload.at).toLocaleTimeString()}`
@@ -136,9 +141,7 @@ async function loginWithGithub() {
   try {
     const state = await window.gitNoteApi.startOAuth();
     auth.setAuth(state.auth);
-    repo.tree = state.tree;
-    repo.mode = state.settings.mode;
-    repo.settings = state.settings;
+    await repo.bootstrap();
   } finally {
     loading.value = false;
   }
@@ -162,7 +165,7 @@ async function createTemplateNote(card) {
 }
 
 async function openHistory(node) {
-  if (node.type !== 'file' || !auth.isLoggedIn) {
+  if (node.type !== 'file' || !auth.isLoggedIn || !repo.currentRepo) {
     return;
   }
   historyFilePath.value = node.path;
@@ -195,14 +198,44 @@ async function restoreHistory(entry) {
 async function chooseDirectory() {
   const selected = await window.gitNoteApi.chooseDirectory();
   if (selected) {
-    await repo.saveSettings({ repoRoot: selected });
+    await repo.saveSettings({
+      globalSettings: {
+        baseStoragePath: selected
+      }
+    });
   }
+}
+
+async function saveSettings(draft) {
+  await repo.saveSettings({
+    language: draft.language,
+    backgroundTheme: draft.backgroundTheme,
+    globalSettings: {
+      baseStoragePath: draft.repoRoot
+    }
+  });
+
+  if (repo.currentRepo?.id) {
+    const state = await window.gitNoteApi.updateRepo({
+      repoId: repo.currentRepo.id,
+      updates: {
+        syncIntervalMinutes: draft.syncIntervalMinutes
+      }
+    });
+    repo.repos = state.repos || repo.repos;
+    repo.currentRepoId = state.currentRepoId || repo.currentRepoId;
+    repo.currentRepo = state.repo || repo.currentRepo;
+  } else {
+    repo.globalSettings.defaultSyncInterval = draft.syncIntervalMinutes;
+  }
+
+  settingsOpen.value = false;
 }
 
 async function logout() {
   const state = await window.gitNoteApi.logout();
   auth.setAuth(state.auth);
-  repo.tree = state.tree;
+  repo.tree = state.tree || [];
   repo.settings = state.settings;
   repo.mode = state.settings.mode;
   settingsOpen.value = false;
@@ -225,16 +258,21 @@ async function logout() {
       <div class="sidebar-top">
         <div>
           <p class="label">{{ repo.mode === 'remote' ? t('githubSync') : t('localMode') }}</p>
-          <h2>{{ t('notes') }}</h2>
+          <h2>{{ repo.currentRepo?.name || t('notes') }}</h2>
         </div>
         <button class="ghost" @click="settingsOpen = true">{{ t('settings') }}</button>
+        <button v-if="repo.mode === 'remote' && repo.currentRepo" class="ghost small" @click="repoManagerOpen = true" :title="repo.currentRepo?.name">
+          {{ repo.currentRepo?.name?.slice(0, 12) || 'Repo' }}
+        </button>
       </div>
+
       <div class="sidebar-actions">
         <button class="accent" @click="handleCreate('', 'file')">{{ t('newNote') }}</button>
         <button @click="handleCreate('', 'directory')">{{ t('newFolder') }}</button>
-        <button v-if="auth.isLoggedIn" @click="repo.syncNow()">{{ t('syncNow') }}</button>
+        <button v-if="auth.isLoggedIn && repo.currentRepo" @click="repo.syncNow()">{{ t('syncNow') }}</button>
         <button v-else @click="loginWithGithub">{{ t('loginAndSync') }}</button>
       </div>
+
       <section class="templates">
         <p class="label">{{ t('templates') }}</p>
         <div class="template-grid">
@@ -248,6 +286,7 @@ async function logout() {
           </button>
         </div>
       </section>
+
       <FileTree
         :nodes="repo.tree"
         :selected="repo.selectedFile"
@@ -258,6 +297,7 @@ async function logout() {
         @history="openHistory"
       />
     </aside>
+
     <section class="editor-area">
       <header class="editor-header">
         <div>
@@ -269,6 +309,7 @@ async function logout() {
           <span>{{ auth.user?.login }}</span>
         </div>
       </header>
+
       <MarkdownEditor
         v-if="repo.selectedFile"
         :model-value="repo.content"
@@ -283,10 +324,14 @@ async function logout() {
   <Settings
     :open="settingsOpen"
     :t="t"
-    :settings="repo.settings"
+    :settings="{
+      ...repo.settings,
+      syncIntervalMinutes: repo.currentRepo?.syncIntervalMinutes || repo.globalSettings.defaultSyncInterval,
+      repoRoot: repo.globalSettings.baseStoragePath
+    }"
     :auth="{ isLoggedIn: auth.isLoggedIn, user: auth.user }"
     @close="settingsOpen = false"
-    @save="async (draft) => { await repo.saveSettings(draft); settingsOpen = false; }"
+    @save="saveSettings"
     @choose-directory="chooseDirectory"
     @logout="logout"
   />
@@ -311,6 +356,14 @@ async function logout() {
       <pre class="history-preview">{{ historyPreview }}</pre>
     </template>
   </HistoryDialog>
+
+  <RepoManager
+    :open="repoManagerOpen"
+    :repos="repo.repos"
+    :t="t"
+    @close="repoManagerOpen = false"
+    @remove="repo.removeRepo"
+  />
 </template>
 
 <style scoped>
@@ -335,7 +388,7 @@ async function logout() {
 .shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 18px;
   padding: 18px;
 }
@@ -352,9 +405,10 @@ async function logout() {
 
 .sidebar {
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto auto 1fr;
   gap: 16px;
   padding: 18px;
+  overflow: hidden;
 }
 
 .sidebar-top,
@@ -378,8 +432,8 @@ async function logout() {
 }
 
 .sidebar-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -399,6 +453,7 @@ async function logout() {
   text-align: left;
   border-radius: 18px;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 235, 214, 0.85));
+  padding: 16px;
 }
 
 button {
@@ -429,6 +484,7 @@ button {
   grid-template-rows: auto 1fr;
   padding: 18px;
   gap: 14px;
+  min-width: 0;
 }
 
 .user-box {
@@ -450,5 +506,47 @@ button {
   min-height: 100%;
   color: var(--muted);
   white-space: pre-wrap;
+}
+
+:deep(.tree) {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+@media (max-width: 1100px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar,
+  .editor-area {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .sidebar,
+  .editor-area {
+    border-radius: 20px;
+    padding: 14px;
+  }
+
+  .sidebar-actions,
+  .template-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-top,
+  .editor-header {
+    align-items: flex-start;
+    gap: 12px;
+    flex-direction: column;
+  }
 }
 </style>

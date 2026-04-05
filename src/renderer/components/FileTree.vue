@@ -67,8 +67,10 @@ function forwardRename(...args) {
         @click="node.type === 'directory' ? toggle(node.path) : emit('open', node.path)"
         @contextmenu.prevent="emit('history', node)"
       >
-        <span>{{ node.type === 'directory' ? (openDirs.has(node.path) ? 'v' : '>') : '-' }}</span>
-        <span>{{ node.name }}</span>
+        <div class="node-main">
+          <span class="node-toggle">{{ node.type === 'directory' ? (openDirs.has(node.path) ? 'v' : '>') : '-' }}</span>
+          <span class="node-name" :title="node.name">{{ node.name }}</span>
+        </div>
         <div class="row-actions">
           <button @click.stop="onCreate(node.path, 'file')">+File</button>
           <button @click.stop="onCreate(node.path, 'directory')">+Folder</button>
@@ -98,13 +100,29 @@ function forwardRename(...args) {
 }
 
 .node-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
+  display: grid;
+  gap: 10px;
   border-radius: 12px;
   padding: 6px 10px;
   cursor: pointer;
+}
+
+.node-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.node-toggle {
+  width: 14px;
+  flex: 0 0 14px;
+}
+
+.node-name {
+  min-width: 0;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .node-row:hover,
@@ -113,9 +131,9 @@ function forwardRename(...args) {
 }
 
 .row-actions {
-  margin-left: auto;
   opacity: 0;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 

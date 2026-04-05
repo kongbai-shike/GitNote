@@ -28,7 +28,7 @@ describe('GitHandler', () => {
   it('skips commit when there are no changed files', async () => {
     mockGit.status.mockResolvedValue({ files: [] });
 
-    const result = await handler.commitAndPush('test');
+    const result = await handler.commitAndPush('D:/tmp/repo', 'test');
 
     expect(mockGit.add).toHaveBeenCalledWith('-A');
     expect(mockGit.commit).not.toHaveBeenCalled();
@@ -39,7 +39,7 @@ describe('GitHandler', () => {
     mockGit.status.mockResolvedValue({ files: [{ path: 'a.md' }] });
     mockGit.push.mockResolvedValue({});
 
-    const result = await handler.commitAndPush('test');
+    const result = await handler.commitAndPush('D:/tmp/repo', 'test');
 
     expect(mockGit.commit).toHaveBeenCalledWith('test');
     expect(mockGit.push).toHaveBeenCalledWith('origin');

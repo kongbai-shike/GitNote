@@ -27,6 +27,23 @@ watch(
   },
   { deep: true }
 );
+
+watch(
+  () => draft.value.backgroundTheme,
+  (value) => {
+    document.documentElement.dataset.theme = value || 'paper-dawn';
+  }
+);
+
+function saveDraft() {
+  emit('save', {
+    ...draft.value,
+    syncIntervalMinutes: Number(draft.value.syncIntervalMinutes) > 0 ? Number(draft.value.syncIntervalMinutes) : 2,
+    repoRoot: draft.value.repoRoot?.trim() || props.settings.repoRoot || '',
+    language: draft.value.language || 'zh-CN',
+    backgroundTheme: draft.value.backgroundTheme || 'paper-dawn'
+  });
+}
 </script>
 
 <template>
@@ -69,7 +86,7 @@ watch(
       <div class="actions">
         <button class="secondary" @click="emit('close')">{{ t('cancel') }}</button>
         <button class="secondary danger" @click="emit('logout')">{{ t('logout') }}</button>
-        <button class="primary" @click="emit('save', draft.value)">{{ t('save') }}</button>
+        <button class="primary" @click="saveDraft">{{ t('save') }}</button>
       </div>
     </section>
   </div>
@@ -86,6 +103,8 @@ watch(
 
 .panel {
   width: min(560px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
   display: grid;
   gap: 18px;
   padding: 28px;
@@ -135,6 +154,7 @@ img {
 
 .actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
 }

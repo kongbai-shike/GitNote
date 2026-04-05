@@ -1,200 +1,280 @@
 # GitNote
 
-GitNote is an Electron desktop note app for Markdown files with two separate storage domains:
+GitNote 是一个基于 Electron + Vue 3 的桌面 Markdown 笔记工具，支持：
 
-- Local mode: notes are stored under Electron `userData/local_notes/` and never sync.
-- GitHub mode: the app authenticates with GitHub OAuth, creates or reuses a private `GitNote` repo, clones it locally, edits real `.md` files, and syncs with git.
+- 本地离线笔记
+- GitHub OAuth 登录
+- 登录后自动创建或复用单一私有同步仓库
+- Markdown 编辑与预览
+- 文件树管理
+- 自动同步、历史版本、冲突处理
 
-## Tech Stack
+当前产品方向已经收敛为：
+
+- 每个 GitHub 用户只使用一个同步仓库
+- 登录后自动检查并创建统一仓库
+- 仓库名固定为 `gitnote-notes-${GitHub 用户名}`
+
+这样其他人下载项目后，不需要理解多仓库管理，直接按说明配置自己的 GitHub OAuth 即可运行。
+
+## 技术栈
 
 - Electron
-- Vue 3 + Vite
+- Vue 3
+- Vite
 - Pinia
-- `md-editor-v3`
-- `simple-git`
-- `@octokit/rest`
-- `axios`
-- `electron-store`
-- `electron-builder`
+- md-editor-v3
+- simple-git
+- axios
+- @octokit/rest
+- electron-store
+- electron-builder
 
-## Environment Requirements
+## 环境要求
 
 - Node.js `>= 18`
 - npm `>= 9`
-- Git installed and available in `PATH`
-- Windows 10 or 11 for packaging `.exe`
+- 本机已安装 Git，并且 `git` 在 `PATH` 中可用
+- Windows 环境下可打包 `.exe`
 
-## How To Register GitHub OAuth App
+## 项目目录
 
-1. Open GitHub `Settings -> Developer settings -> OAuth Apps -> New OAuth App`.
-2. Fill the OAuth app fields with:
-   - Application name: `GitNote Dev`
-   - Homepage URL: `http://127.0.0.1:3000`
-   - Authorization callback URL: `http://127.0.0.1:3000/callback`
-3. Create the app.
-4. Copy the `Client ID` and generate a `Client Secret`.
-5. Open [src/main/oauth.js](/d:/html/Git_Note/src/main/oauth.js) and replace:
-   - `REPLACE_WITH_GITHUB_CLIENT_ID`
-   - `REPLACE_WITH_GITHUB_CLIENT_SECRET`
+关键文件如下：
 
-The callback URL in GitHub must match the value used in [src/shared/constants.js](/d:/html/Git_Note/src/shared/constants.js).
+- [package.json](/d:/html/Git_Note/package.json)
+- [electron.vite.config.js](/d:/html/Git_Note/electron.vite.config.js)
+- [index.js](/d:/html/Git_Note/src/main/index.js)
+- [oauth.js](/d:/html/Git_Note/src/main/oauth.js)
+- [git-handler.js](/d:/html/Git_Note/src/main/git-handler.js)
+- [store-manager.js](/d:/html/Git_Note/src/main/store-manager.js)
+- [App.vue](/d:/html/Git_Note/src/renderer/App.vue)
 
-## Install Dependencies
+## GitHub OAuth 配置说明
+
+不要把真实的 `Client Secret` 直接提交到仓库。
+
+GitNote 现在支持两种配置方式：
+
+1. 开发模式：使用项目根目录的 `.env`
+2. 打包后的 exe：使用程序同目录下的 `gitnote.oauth.json`
+
+### 1. 创建 GitHub OAuth App
+
+打开：
+
+`GitHub -> Settings -> Developer settings -> OAuth Apps -> New OAuth App`
+
+建议填写：
+
+- Application name: `GitNote`
+- Homepage URL: `http://127.0.0.1:3000`
+- Authorization callback URL: `http://127.0.0.1:3000/callback`
+
+注意：
+
+- 回调地址必须和 [constants.js](/d:/html/Git_Note/src/shared/constants.js) 中的 `DEFAULT_CALLBACK_URL` 保持一致
+- 当前项目默认使用 `http://127.0.0.1:3000/callback`
+
+创建后会得到：
+
+- `Client ID`
+- `Client Secret`
+
+## 开发模式使用教程
+
+### 第一步：安装依赖
 
 ```bash
 npm install
 ```
 
-## Run Development Mode
+### 第二步：创建本地配置
+
+复制示例文件：
+
+```bash
+copy .env.example .env
+```
+
+然后编辑项目根目录下的 `.env`：
+
+```env
+GITNOTE_GITHUB_CLIENT_ID=你的_GitHub_Client_ID
+GITNOTE_GITHUB_CLIENT_SECRET=你的_GitHub_Client_Secret
+```
+
+说明：
+
+- `.env` 已被 `.gitignore` 忽略，不会被提交到远程仓库
+- 其他开发者下载项目后，也只需要各自创建自己的 `.env`
+
+### 第三步：启动开发模式
 
 ```bash
 npm run dev
 ```
 
-## Build Windows Executable
+## 打包后的 exe 使用教程
 
-```bash
-npm run dist
+如果你已经拿到了打包好的 `GitNote.exe`，不需要 Node.js 也可以运行，但仍然需要先配置 OAuth。
+
+### 第一步：找到 exe 所在目录
+
+例如：
+
+`release/win-unpacked/`
+
+### 第二步：复制示例配置文件
+
+将 [gitnote.oauth.example.json](/d:/html/Git_Note/gitnote.oauth.example.json) 复制并重命名为：
+
+`gitnote.oauth.json`
+
+把它放到 `GitNote.exe` 同目录。
+
+内容改成：
+
+```json
+{
+  "clientId": "你的_GitHub_Client_ID",
+  "clientSecret": "你的_GitHub_Client_Secret"
+}
 ```
 
-Generated artifacts are written to `release/`.
+### 第三步：运行 exe
 
-## First Use
+直接双击：
 
-1. Launch the app.
-2. On first run, choose:
-   - `使用 GitHub 登录`
-   - `仅本地使用`
-3. In local mode, notes are saved under the local notes directory and stay offline.
-4. In GitHub mode:
-   - complete OAuth in the Electron popup
-   - GitNote creates or reuses the private `GitNote` repository
-   - the repo is cloned into the configured repo root
-   - startup runs `git pull`
-5. Create, rename, delete, and edit `.md` files from the app UI.
-6. Edits save to disk with a 1 second debounce.
-7. Sync runs automatically at the configured interval, default `2` minutes.
+`GitNote.exe`
 
-## Storage Layout
+说明：
 
-- Local domain: `%APPDATA%/<Your App>/local_notes`
-- Git repo working copy: `%APPDATA%/<Your App>/GitNote/repo` by default
-- Assets: `assets/` folder next to note directories
+- `gitnote.oauth.json` 已被 `.gitignore` 忽略，不会被提交
+- 这适合别人下载源码后自行打包，或者直接拿到你的 `win-unpacked` 版本后运行
 
-The local domain and synced domain are intentionally separate so logout does not overwrite local-only notes.
+## 首次使用流程
 
-## Main Features
+### 仅本地使用
 
-### First-run onboarding
+1. 启动应用
+2. 点击“仅本地使用”
+3. 创建、编辑、删除本地 Markdown 笔记
+4. 所有数据保存在 Electron 的本地用户目录中
 
-The renderer shows a welcome panel for GitHub login or local-only use until `firstRunCompleted` is stored.
+### 使用 GitHub 同步
 
-### OAuth flow
+1. 启动应用
+2. 点击“使用 GitHub 登录”
+3. 浏览器授权 GitHub OAuth
+4. 应用自动检查当前账号下是否已有：
 
-- The main process opens a GitHub auth window.
-- A temporary local HTTP listener catches the `code` at `http://127.0.0.1:3000/callback`.
-- The main process exchanges `code` for `access_token` with `axios`.
-- The token is stored in `electron-store` with encryption enabled.
+`gitnote-notes-${你的 GitHub 用户名}`
 
-### Repository handling
+5. 如果没有，则自动创建为私有仓库
+6. 如果已经存在，则直接复用
+7. 仓库会被自动克隆到本地
+8. 后续笔记编辑会按设定自动同步
 
-- The app checks whether the authenticated user already owns `GitNote`.
-- If missing, it creates a private repo with `@octokit/rest`.
-- The repo is cloned locally with `simple-git`.
-- Git username/email are configured in the cloned working tree.
+## 运行命令
 
-### File tree and editor
+### 开发
 
-- The left panel shows directories and `.md` files recursively.
-- Context actions support create file, create folder, rename, and delete.
-- The right panel uses `md-editor-v3` for Markdown editing and preview.
+```bash
+npm run dev
+```
 
-### Auto sync
+### 构建
 
-Auto sync in GitHub mode follows this sequence:
+```bash
+npm run build
+```
 
-1. `git add -A`
-2. `git commit -m "Auto sync at ..."`
-3. `git push`
-
-If `push` fails, the app attempts `git pull --rebase`. If rebase conflicts, the renderer opens a resolver dialog for local, remote, or manual content selection.
-
-### Version history
-
-- History is fetched from GitHub commits API for the selected file.
-- Commit content preview is loaded from the repository contents API.
-- Restore writes the selected version locally, then creates a new sync commit.
-
-### Local mode export
-
-The IPC surface includes `exportLocalToGithub`, so you can move local-only notes into the GitHub repo after login. The current renderer wiring is focused on the core flow, but the backend path is already present.
-
-## Tests
-
-Run unit tests:
+### 单元测试
 
 ```bash
 npm run test:unit
 ```
 
-Run integration placeholder tests:
+### 打包 Windows 可执行文件
 
 ```bash
-npm run test:integration
+npm run dist
 ```
 
-The unit suite covers the `commitAndPush` behavior in [src/main/git-handler.js](/d:/html/Git_Note/src/main/git-handler.js). The integration test is a scaffold because full Electron OAuth and git network automation needs a controlled test environment.
+打包产物位于：
 
-## Project Files
+- `release/`
+- `release/win-unpacked/`
 
-```text
-Git_Note/
-├── package.json
-├── electron.vite.config.js
-├── src/
-│   ├── main/
-│   │   ├── index.js
-│   │   ├── preload.js
-│   │   ├── oauth.js
-│   │   ├── git-handler.js
-│   │   └── store-manager.js
-│   ├── renderer/
-│   │   ├── index.html
-│   │   ├── main.js
-│   │   ├── App.vue
-│   │   ├── components/
-│   │   │   ├── FileTree.vue
-│   │   │   ├── MarkdownEditor.vue
-│   │   │   ├── Settings.vue
-│   │   │   ├── LoginPanel.vue
-│   │   │   ├── ConflictResolver.vue
-│   │   │   └── HistoryDialog.vue
-│   │   ├── stores/
-│   │   │   ├── repo.js
-│   │   │   └── auth.js
-│   │   └── assets/
-│   │       └── base.css
-│   └── shared/
-│       └── constants.js
-├── resources/
-├── tests/
-│   ├── unit/
-│   │   └── git-handler.spec.js
-│   └── integration/
-│       └── full-flow.spec.js
-└── README.md
+## 当前同步逻辑
+
+登录后，GitNote 使用统一私有仓库同步笔记：
+
+1. `git add -A`
+2. `git commit`
+3. `git push`
+
+如果远端有新提交导致 push 失败：
+
+1. 自动执行 `git pull --rebase`
+2. 如果有冲突，则弹出冲突处理界面
+
+## 本地模式与同步模式
+
+### 本地模式
+
+- 数据保存在本地目录
+- 不依赖 GitHub
+- 可完全离线使用
+
+### GitHub 同步模式
+
+- 登录后自动接管统一私有仓库
+- 所有笔记保存到该仓库工作目录
+- 支持手动同步和自动同步
+
+## 安全说明
+
+这个项目是 Electron 客户端应用。
+
+因此需要明确一点：
+
+- 不要把真实 `Client Secret` 写死进源码再提交到 GitHub
+- 不要把真实 `.env` 或 `gitnote.oauth.json` 上传到仓库
+- 每个使用者都应该使用自己的 GitHub OAuth App 配置
+
+仓库中已经忽略了以下文件：
+
+- `.env`
+- `gitnote.oauth.json`
+- `prompt*.md`
+
+## 测试状态
+
+当前已覆盖的测试文件：
+
+- [git-handler.spec.js](/d:/html/Git_Note/tests/unit/git-handler.spec.js)
+- [repo-manager.spec.js](/d:/html/Git_Note/tests/unit/repo-manager.spec.js)
+
+运行：
+
+```bash
+npm run test:unit
 ```
 
-## User Guide
+## 已知说明
 
-1. Register the OAuth app in GitHub.
-2. Fill the client credentials in [src/main/oauth.js](/d:/html/Git_Note/src/main/oauth.js).
-3. Run `npm install`.
-4. Run `npm run dev` and verify login or local mode.
-5. When ready, run `npm run dist` to generate the installer or portable `.exe`.
+- 如果网络无法访问 GitHub，OAuth、clone、push、打包下载依赖都可能失败
+- `npm run dist` 在网络不稳定时，`electron-builder` 可能卡在下载签名工具
+- 如果只想直接运行，优先使用 `release/win-unpacked/GitNote.exe`
 
-## Notes
+## 对其他开发者的建议
 
-- A custom icon file is not bundled here. If you need branded packaging output, place `icon.ico` under `resources/` and add the `win.icon` field back into [package.json](/d:/html/Git_Note/package.json).
-- The conflict dialog is intentionally compact, not a full line-by-line merge editor.
-- Native clipboard image paste can be expanded further, but the main-process asset persistence endpoint is already included.
+如果你准备把这个项目上传到 Git 仓库，推荐保持以下规则：
+
+1. 只提交 `.env.example` 和 `gitnote.oauth.example.json`
+2. 不要提交真实 `.env`
+3. 不要提交真实 `gitnote.oauth.json`
+4. 不要把 OAuth 密钥硬编码到 [oauth.js](/d:/html/Git_Note/src/main/oauth.js)
+
+这样其他人下载下来后，按照本 README 配置即可直接运行。 

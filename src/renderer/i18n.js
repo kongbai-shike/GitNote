@@ -3,7 +3,7 @@ export const messages = {
     loading: '正在加载 GitNote...',
     startupFailed: '启动失败',
     welcomeTitle: '基于 Git 的 Markdown 笔记',
-    welcomeDesc: '先本地使用，需要时再连接 GitHub 私有仓库同步。',
+    welcomeDesc: '先在本地使用，需要时再连接 GitHub 私有仓库同步。',
     loginGithub: '使用 GitHub 登录',
     localOnly: '仅本地使用',
     githubSync: 'GitHub 同步',
@@ -27,7 +27,7 @@ export const messages = {
     browse: '选择',
     language: '界面语言',
     background: '背景主题',
-    accountHint: '当前已连接 GitHub，同步目标为私有 GitNote 仓库。',
+    accountHint: '当前已连接 GitHub，同步目标为你的私有 GitNote 仓库。',
     cancel: '取消',
     logout: '退出登录',
     save: '保存',
@@ -52,7 +52,9 @@ export const messages = {
     themeForest: '森系雾面',
     themeNight: '夜幕工作台',
     langZh: '简体中文',
-    langEn: 'English'
+    langEn: 'English',
+    repoManager: '仓库管理',
+    remove: '移除'
   },
   en: {
     loading: 'Loading GitNote...',
@@ -82,7 +84,7 @@ export const messages = {
     browse: 'Browse',
     language: 'Language',
     background: 'Background Theme',
-    accountHint: 'GitHub is connected. Sync target is the private GitNote repository.',
+    accountHint: 'GitHub is connected. Sync target is your private GitNote repository.',
     cancel: 'Cancel',
     logout: 'Logout',
     save: 'Save',
@@ -107,7 +109,9 @@ export const messages = {
     themeForest: 'Forest Mist',
     themeNight: 'Night Desk',
     langZh: '简体中文',
-    langEn: 'English'
+    langEn: 'English',
+    repoManager: 'Repository',
+    remove: 'Remove'
   }
 };
 

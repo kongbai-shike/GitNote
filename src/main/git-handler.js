@@ -14,25 +14,22 @@ export class GitHandler {
     return new Octokit({ auth: token });
   }
 
-  getRepoRoot() {
-    return this.storeManager.getRootForMode('remote');
+  getGit(repoPath) {
+    return simpleGit({ baseDir: repoPath, binary: 'git' });
   }
 
-  getGit() {
-    return simpleGit({ baseDir: this.getRepoRoot(), binary: 'git' });
-  }
-
-  async ensureRepo({ token, repoName = DEFAULT_REPO_NAME }) {
+  async ensureRepo({ token, owner, repoName = DEFAULT_REPO_NAME, repoPath, createIfMissing = false }) {
     const octokit = this.createOctokit(token);
     const { data: user } = await octokit.users.getAuthenticated();
+    const repoOwner = owner || user.login;
 
     try {
       await octokit.repos.get({
-        owner: user.login,
+        owner: repoOwner,
         repo: repoName
       });
     } catch (error) {
-      if (error.status !== 404) {
+      if (error.status !== 404 || !createIfMissing || repoOwner !== user.login) {
         throw error;
       }
 
@@ -44,17 +41,17 @@ export class GitHandler {
       });
     }
 
-    const repoRoot = this.getRepoRoot();
+    const repoRoot = repoPath;
     fs.mkdirSync(path.dirname(repoRoot), { recursive: true });
 
     if (!fs.existsSync(repoRoot) || !fs.existsSync(path.join(repoRoot, '.git'))) {
       if (fs.existsSync(repoRoot)) {
         fs.rmSync(repoRoot, { recursive: true, force: true });
       }
-      await simpleGit().clone(`https://${token}@github.com/${user.login}/${repoName}.git`, repoRoot);
+      await simpleGit().clone(`https://${token}@github.com/${repoOwner}/${repoName}.git`, repoRoot);
     }
 
-    const git = this.getGit();
+    const git = this.getGit(repoRoot);
     await git.addConfig('user.name', user.login);
     await git.addConfig('user.email', `${user.id}+${user.login}@users.noreply.github.com`);
     await git.pull('origin', 'main', { '--rebase': 'true' }).catch(() => git.pull('origin', 'master', { '--rebase': 'true' }));
@@ -66,32 +63,32 @@ export class GitHandler {
     };
   }
 
-  async pullLatest() {
-    const git = this.getGit();
+  async pullLatest(repoPath) {
+    const git = this.getGit(repoPath);
     try {
       return await git.pull('origin', 'main', { '--rebase': 'true' });
     } catch (error) {
       try {
         return await git.pull('origin', 'master', { '--rebase': 'true' });
       } catch (rebaseError) {
-        const conflict = await this.collectConflictContents();
+        const conflict = await this.collectConflictContents(repoPath);
         const choice = await this.onConflict(conflict);
         if (!choice) {
           throw rebaseError;
         }
-        return this.applyConflictChoice(choice);
+        return this.applyConflictChoice(choice, repoPath);
       }
     }
   }
 
-  async collectConflictContents() {
-    const git = this.getGit();
+  async collectConflictContents(repoPath) {
+    const git = this.getGit(repoPath);
     const status = await git.status();
     const conflicted = status.conflicted[0];
     if (!conflicted) {
       return null;
     }
-    const absolute = path.join(this.getRepoRoot(), conflicted);
+    const absolute = path.join(repoPath, conflicted);
     const local = fs.existsSync(absolute) ? fs.readFileSync(absolute, 'utf8') : '';
     let remote = '';
     try {
@@ -102,9 +99,9 @@ export class GitHandler {
     return { filePath: conflicted, local, remote };
   }
 
-  async applyConflictChoice({ strategy, filePath, content }) {
-    const git = this.getGit();
-    const absolute = path.join(this.getRepoRoot(), filePath);
+  async applyConflictChoice({ strategy, filePath, content }, repoPath) {
+    const git = this.getGit(repoPath);
+    const absolute = path.join(repoPath, filePath);
 
     if (strategy === 'remote') {
       const remoteContent = await git.show([`origin/main:${filePath}`]).catch(() => git.show([`origin/master:${filePath}`]));
@@ -122,8 +119,8 @@ export class GitHandler {
     return { resolved: true };
   }
 
-  async commitAndPush(message = `Auto sync at ${new Date().toISOString()}`) {
-    const git = this.getGit();
+  async commitAndPush(repoPath, message = `Auto sync at ${new Date().toISOString()}`) {
+    const git = this.getGit(repoPath);
     await git.add('-A');
     const status = await git.status();
     if (!status.files.length) {
@@ -136,7 +133,7 @@ export class GitHandler {
       await git.push('origin');
       return { pushed: true };
     } catch {
-      await this.pullLatest();
+      await this.pullLatest(repoPath);
       await git.push('origin');
       return { pushed: true, recovered: true };
     }

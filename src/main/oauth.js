@@ -1,15 +1,91 @@
+import fs from 'node:fs';
 import http from 'node:http';
-import { URL } from 'node:url';
+import path from 'node:path';
+import { fileURLToPath, URL } from 'node:url';
 import axios from 'axios';
 import { BrowserWindow } from 'electron';
 import { DEFAULT_CALLBACK_URL } from '../shared/constants.js';
 
-const CLIENT_ID = 'REPLACE_WITH_GITHUB_CLIENT_ID';
-const CLIENT_SECRET = 'REPLACE_WITH_GITHUB_CLIENT_SECRET';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const content = fs.readFileSync(filePath, 'utf8');
+  const entries = {};
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+    let value = line.slice(separatorIndex + 1).trim();
+    value = value.replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+    entries[key] = value;
+  }
+
+  return entries;
+}
+
+function readOAuthConfig() {
+  const envCandidates = [
+    path.resolve(process.cwd(), '.env'),
+    path.resolve(__dirname, '../../.env')
+  ];
+  const jsonCandidates = [
+    path.resolve(process.cwd(), 'gitnote.oauth.json'),
+    path.resolve(path.dirname(process.execPath), 'gitnote.oauth.json')
+  ];
+
+  const mergedEnv = envCandidates.reduce((accumulator, candidate) => {
+    return { ...accumulator, ...parseEnvFile(candidate) };
+  }, {});
+
+  const jsonConfig = jsonCandidates.reduce((accumulator, candidate) => {
+    if (!fs.existsSync(candidate)) {
+      return accumulator;
+    }
+
+    try {
+      return { ...accumulator, ...JSON.parse(fs.readFileSync(candidate, 'utf8')) };
+    } catch {
+      return accumulator;
+    }
+  }, {});
+
+  const clientId =
+    process.env.GITNOTE_GITHUB_CLIENT_ID ||
+    mergedEnv.GITNOTE_GITHUB_CLIENT_ID ||
+    jsonConfig.clientId ||
+    '';
+  const clientSecret =
+    process.env.GITNOTE_GITHUB_CLIENT_SECRET ||
+    mergedEnv.GITNOTE_GITHUB_CLIENT_SECRET ||
+    jsonConfig.clientSecret ||
+    '';
+
+  return {
+    clientId,
+    clientSecret
+  };
+}
 
 export async function startGithubOAuth() {
-  if (CLIENT_ID.includes('REPLACE') || CLIENT_SECRET.includes('REPLACE')) {
-    throw new Error('Please set GitHub OAuth CLIENT_ID and CLIENT_SECRET in src/main/oauth.js');
+  const { clientId, clientSecret } = readOAuthConfig();
+
+  if (!clientId || !clientSecret) {
+    throw new Error(
+      'GitHub OAuth is not configured. Add GITNOTE_GITHUB_CLIENT_ID and GITNOTE_GITHUB_CLIENT_SECRET to .env, or place gitnote.oauth.json next to GitNote.exe.'
+    );
   }
 
   const callbackUrl = DEFAULT_CALLBACK_URL;
@@ -48,7 +124,7 @@ export async function startGithubOAuth() {
   });
 
   const authUrl = new URL('https://github.com/login/oauth/authorize');
-  authUrl.searchParams.set('client_id', CLIENT_ID);
+  authUrl.searchParams.set('client_id', clientId);
   authUrl.searchParams.set('redirect_uri', callbackUrl);
   authUrl.searchParams.set('scope', 'repo read:user');
 
@@ -67,8 +143,8 @@ export async function startGithubOAuth() {
   const tokenResponse = await axios.post(
     'https://github.com/login/oauth/access_token',
     {
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
+      client_id: clientId,
+      client_secret: clientSecret,
       code,
       redirect_uri: callbackUrl
     },
