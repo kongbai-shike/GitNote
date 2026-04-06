@@ -32,7 +32,8 @@ export class StoreManager {
       mode: this.store.get('settings.mode', DOMAIN_LOCAL),
       firstRunCompleted: this.store.get('settings.firstRunCompleted', false),
       language: this.store.get('settings.language', 'zh-CN'),
-      backgroundTheme: this.store.get('settings.backgroundTheme', 'paper-dawn')
+      backgroundTheme: this.store.get('settings.backgroundTheme', 'paper-dawn'),
+      themeMode: this.store.get('settings.themeMode', 'system')
     };
   }
 
@@ -136,5 +137,59 @@ export class StoreManager {
 
   getModeRoot() {
     return this.getRootForMode(this.getSettings().mode);
+  }
+
+  getRecentScopeKey(mode = this.getSettings().mode) {
+    if (mode === DOMAIN_REMOTE) {
+      return `remote:${this.getCurrentRepoId() || 'default'}`;
+    }
+    return 'local';
+  }
+
+  getRecentNotes(scopeKey = this.getRecentScopeKey()) {
+    const recentNotes = this.store.get('recentNotes', {});
+    return recentNotes[scopeKey] || [];
+  }
+
+  saveRecentNotes(scopeKey, items) {
+    const recentNotes = this.store.get('recentNotes', {});
+    recentNotes[scopeKey] = items;
+    this.store.set('recentNotes', recentNotes);
+    return recentNotes[scopeKey];
+  }
+
+  touchRecentNote(filePath, mode = this.getSettings().mode) {
+    const scopeKey = this.getRecentScopeKey(mode);
+    const next = [
+      {
+        path: filePath,
+        name: path.basename(filePath),
+        at: new Date().toISOString()
+      },
+      ...this.getRecentNotes(scopeKey).filter((item) => item.path !== filePath)
+    ].slice(0, 8);
+    return this.saveRecentNotes(scopeKey, next);
+  }
+
+  renameRecentNote(oldPath, newPath, mode = this.getSettings().mode) {
+    const scopeKey = this.getRecentScopeKey(mode);
+    const next = this.getRecentNotes(scopeKey).map((item) =>
+      item.path === oldPath
+        ? {
+            ...item,
+            path: newPath,
+            name: path.basename(newPath)
+          }
+        : item
+    );
+    return this.saveRecentNotes(scopeKey, next);
+  }
+
+  removeRecentNote(targetPath, mode = this.getSettings().mode) {
+    const scopeKey = this.getRecentScopeKey(mode);
+    const next = this.getRecentNotes(scopeKey).filter(
+      (item) => item.path !== targetPath && !item.path.startsWith(`${targetPath}/`)
+    );
+    return this.saveRecentNotes(scopeKey, next);
   }
 }

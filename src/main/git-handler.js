@@ -124,6 +124,14 @@ export class GitHandler {
     await git.add('-A');
     const status = await git.status();
     if (!status.files.length) {
+      if (status.ahead > 0) {
+        try {
+          await git.push('origin');
+          return { pushed: true, committed: false, aheadBeforePush: status.ahead };
+        } catch (error) {
+          throw new Error(`Local commits exist but push failed: ${error.message}`);
+        }
+      }
       return { skipped: true, reason: 'No changes' };
     }
 
@@ -131,11 +139,15 @@ export class GitHandler {
 
     try {
       await git.push('origin');
-      return { pushed: true };
-    } catch {
-      await this.pullLatest(repoPath);
-      await git.push('origin');
-      return { pushed: true, recovered: true };
+      return { pushed: true, committed: true };
+    } catch (error) {
+      try {
+        await this.pullLatest(repoPath);
+        await git.push('origin');
+        return { pushed: true, committed: true, recovered: true };
+      } catch (pushError) {
+        throw new Error(`Committed locally, but push to GitHub failed: ${pushError.message || error.message}`);
+      }
     }
   }
 

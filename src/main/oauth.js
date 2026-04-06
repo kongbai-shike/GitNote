@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import axios from 'axios';
-import { BrowserWindow } from 'electron';
+import { shell } from 'electron';
 import { DEFAULT_CALLBACK_URL } from '../shared/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -113,32 +113,22 @@ export async function startGithubOAuth() {
     server.listen(Number(callback.port || 80), callback.hostname);
   });
 
-  const authWindow = new BrowserWindow({
-    width: 900,
-    height: 760,
-    autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true
-    }
-  });
-
   const authUrl = new URL('https://github.com/login/oauth/authorize');
   authUrl.searchParams.set('client_id', clientId);
   authUrl.searchParams.set('redirect_uri', callbackUrl);
   authUrl.searchParams.set('scope', 'repo read:user');
 
-  await authWindow.loadURL(authUrl.toString());
+  await shell.openExternal(authUrl.toString());
 
-  const code = await new Promise((resolve, reject) => {
-    authWindow.on('closed', () => reject(new Error('OAuth window closed before authorization completed')));
-    codePromise.then((value) => {
-      resolve(value);
-      if (!authWindow.isDestroyed()) {
-        authWindow.close();
-      }
-    }).catch(reject);
-  });
+  const timeoutMs = 3 * 60 * 1000;
+  const code = await Promise.race([
+    codePromise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Timed out waiting for GitHub OAuth callback in the system browser.'));
+      }, timeoutMs);
+    })
+  ]);
 
   const tokenResponse = await axios.post(
     'https://github.com/login/oauth/access_token',

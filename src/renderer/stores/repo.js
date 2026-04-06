@@ -10,16 +10,23 @@ export const useRepoStore = defineStore('repo', {
     repos: [],
     currentRepoId: '',
     currentRepo: null,
+    recentNotes: [],
     tree: [],
     selectedFile: '',
     content: '',
+    selectedMeta: {
+      editable: true,
+      binary: false,
+      extension: '.md'
+    },
     mode: 'local',
     root: '',
     syncStatus: '',
     settings: {
       firstRunCompleted: false,
       language: 'zh-CN',
-      backgroundTheme: 'paper-dawn'
+      backgroundTheme: 'paper-dawn',
+      themeMode: 'system'
     },
     globalSettings: {
       defaultSyncInterval: 2,
@@ -32,6 +39,7 @@ export const useRepoStore = defineStore('repo', {
       this.repos = state.repos || [];
       this.currentRepoId = state.currentRepoId || '';
       this.currentRepo = state.currentRepo || null;
+      this.recentNotes = state.recentNotes || [];
       this.tree = state.tree;
       this.mode = state.settings.mode;
       this.root = state.root;
@@ -46,6 +54,12 @@ export const useRepoStore = defineStore('repo', {
       this.selectedFile = filePath;
       const result = await window.gitNoteApi.readFile({ filePath });
       this.content = result.content;
+      this.recentNotes = result.recentNotes || this.recentNotes;
+      this.selectedMeta = {
+        editable: result.editable !== false,
+        binary: Boolean(result.binary),
+        extension: result.extension || ''
+      };
     },
     async saveCurrent(content) {
       if (!this.selectedFile) {
@@ -67,15 +81,56 @@ export const useRepoStore = defineStore('repo', {
     async deleteEntry(targetPath) {
       this.tree = await window.gitNoteApi.deleteEntry({ targetPath });
     },
+    async restoreEntry(targetPath) {
+      this.tree = await window.gitNoteApi.restoreEntry({ targetPath });
+    },
+    async purgeEntry(targetPath) {
+      this.tree = await window.gitNoteApi.purgeEntry({ targetPath });
+    },
     async syncNow() {
-      const result = await window.gitNoteApi.syncNow();
-      this.syncStatus = result.skipped ? 'No changes to sync.' : 'Sync completed.';
+      this.syncStatus = 'syncing';
+      try {
+        const result = await window.gitNoteApi.syncNow();
+        this.syncStatus = result.skipped ? 'no_changes' : 'success';
+        return result;
+      } catch (error) {
+        this.syncStatus = `error:${error?.message || String(error)}`;
+        throw error;
+      }
+    },
+    async pullNow() {
+      this.syncStatus = 'pulling';
+      try {
+        const result = await window.gitNoteApi.pullNow();
+        await this.refreshTree();
+        if (this.selectedFile) {
+          const stillExists = await window.gitNoteApi.readFile({ filePath: this.selectedFile }).catch(() => null);
+          if (stillExists) {
+            this.content = stillExists.content;
+            this.recentNotes = stillExists.recentNotes || this.recentNotes;
+            this.selectedMeta = {
+              editable: stillExists.editable !== false,
+              binary: Boolean(stillExists.binary),
+              extension: stillExists.extension || ''
+            };
+          } else {
+            this.selectedFile = '';
+            this.content = '';
+          }
+        }
+        this.syncStatus = 'pull_success';
+        return result;
+      } catch (error) {
+        this.syncStatus = `error:${error?.message || String(error)}`;
+        throw error;
+      }
     },
     async addRepo(payload) {
       const state = await window.gitNoteApi.addRepo(payload);
       this.repos = state.repos || [];
       this.currentRepoId = state.currentRepoId || '';
       this.currentRepo = state.currentRepo || null;
+      this.recentNotes = state.recentNotes || [];
       this.tree = state.tree || [];
       this.root = state.root || '';
     },
@@ -84,16 +139,23 @@ export const useRepoStore = defineStore('repo', {
       this.repos = state.repos || [];
       this.currentRepoId = state.currentRepoId || '';
       this.currentRepo = state.currentRepo || null;
+      this.recentNotes = state.recentNotes || [];
       this.tree = state.tree || [];
       this.root = state.root || '';
       this.selectedFile = '';
       this.content = '';
+      this.selectedMeta = {
+        editable: true,
+        binary: false,
+        extension: '.md'
+      };
     },
     async removeRepo(repoId) {
       const state = await window.gitNoteApi.removeRepo({ repoId });
       this.repos = state.repos || [];
       this.currentRepoId = state.currentRepoId || '';
       this.currentRepo = this.repos.find((repo) => repo.id === this.currentRepoId) || null;
+      this.recentNotes = state.recentNotes || [];
       await this.refreshTree();
     },
     async saveSettings(payload) {
